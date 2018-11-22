@@ -19,7 +19,6 @@ import (
 
 	"cmd/go/internal/base"
 	"cmd/go/internal/cfg"
-	"cmd/go/internal/envcmd"
 	"cmd/go/internal/web"
 )
 
@@ -41,53 +40,49 @@ func runBug(cmd *base.Command, args []string) {
 	if len(args) > 0 {
 		base.Fatalf("go bug: bug takes no arguments")
 	}
-	var buf bytes.Buffer
-	buf.WriteString(bugHeader)
-	inspectGoVersion(&buf)
-	fmt.Fprint(&buf, "#### System details\n\n")
-	fmt.Fprintln(&buf, "```")
-	fmt.Fprintf(&buf, "go version %s %s/%s\n", runtime.Version(), runtime.GOOS, runtime.GOARCH)
-	env := cfg.CmdEnv
-	env = append(env, envcmd.ExtraEnvVars()...)
-	for _, e := range env {
-		// Hide the TERM environment variable from "go bug".
-		// See issue #18128
-		if e.Name != "TERM" {
-			fmt.Fprintf(&buf, "%s=\"%s\"\n", e.Name, e.Value)
-		}
-	}
-	printGoDetails(&buf)
-	printOSDetails(&buf)
-	printCDetails(&buf)
-	fmt.Fprintln(&buf, "```")
 
-	body := buf.String()
+	issueTemplate := getGithubIssueTemplate()
+	issueTemplate = strings.Replace(issueTemplate, goVersionPlaceholder, getGoVersion(), 1)
+	issueTemplate = strings.Replace(issueTemplate, goEnvPlaceholder, getGoEnv(), 1)
+	issueTemplate = strings.Replace(issueTemplate, happensOnLatestVersionPlaceholder, checkLatestVersion(), 1)
+
+	body := issueTemplate
 	url := "https://github.com/golang/go/issues/new?body=" + web.QueryEscape(body)
+
 	if !web.OpenBrowser(url) {
 		fmt.Print("Please file a new issue at golang.org/issue/new using this template:\n\n")
 		fmt.Print(body)
 	}
 }
 
-const bugHeader = `Please answer these questions before submitting your issue. Thanks!
-
-#### What did you do?
-If possible, provide a recipe for reproducing the error.
-A complete runnable program is good.
-A link on play.golang.org is best.
-
-
-#### What did you expect to see?
-
-
-#### What did you see instead?
-
-
-`
+const githubIssueTemplateUrl = "https://raw.githubusercontent.com/golang/go/master/.github/ISSUE_TEMPLATE"
+const goVersionPlaceholder = "$ go version"
+const goEnvPlaceholder = "$ go env"
+const happensOnLatestVersionPlaceholder = "### Does this issue reproduce with the latest release?"
 
 func printGoDetails(w io.Writer) {
 	printCmdOut(w, "GOROOT/bin/go version: ", filepath.Join(runtime.GOROOT(), "bin/go"), "version")
 	printCmdOut(w, "GOROOT/bin/go tool compile -V: ", filepath.Join(runtime.GOROOT(), "bin/go"), "tool", "compile", "-V")
+}
+
+func getGoVersion() string {
+	var w strings.Builder
+	printCmdOut(&w, "", filepath.Join(runtime.GOROOT(), "bin/go"), "version")
+	return w.String()
+}
+
+func getGoEnv() string {
+	var w strings.Builder
+	printCmdOut(&w, "", filepath.Join(runtime.GOROOT(), "bin/go"), "env")
+	printOSDetails(&w)
+	printCDetails(&w)
+	return w.String()
+}
+
+func checkLatestVersion() string {
+	var w strings.Builder
+	inspectGoVersion(&w)
+	return w.String()
 }
 
 func printOSDetails(w io.Writer) {
@@ -151,6 +146,15 @@ func inspectGoVersion(w io.Writer) {
 
 	// Devel version or outdated release. Either way, this request is apropos.
 	fmt.Fprintf(w, "#### Does this issue reproduce with the latest release (%s)?\n\n\n", release)
+}
+
+// Returns the issue template from github in string format
+func getGithubIssueTemplate() string {
+	data, err := web.Get(githubIssueTemplateUrl)
+	if err != nil {
+		base.Fatalf("failed to read from %s: %v\n", githubIssueTemplateUrl, err)
+	}
+	return string(data)
 }
 
 // printCmdOut prints the output of running the given command.
